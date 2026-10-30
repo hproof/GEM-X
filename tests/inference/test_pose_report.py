@@ -35,6 +35,12 @@ def test_markdown_report_has_metadata_stages_outputs_and_escaped_errors():
         "output_directory": "/输出/本次",
         "input_count": 2,
         "device": "cuda",
+        "environment": [
+            ["处理器", "测试处理器"],
+            ["WSL 内存总量", "15.58 GiB"],
+            ["PyTorch CUDA 运行时", "12.8"],
+            ["PyTorch CPU 线程数", 12],
+        ],
         "records": records,
         "summary": summarize_records(records, 2, 4),
         "unprocessed_count": 0,
@@ -49,6 +55,11 @@ def test_markdown_report_has_metadata_stages_outputs_and_escaped_errors():
     assert "0.250" in text and "0.500" in text
     assert "ok.jpg.pt" in text and "ok.jpg.pose.json" in text
     assert "首次运行开销" in text
+    assert "## 软硬件环境" in text
+    assert "| 处理器 | 测试处理器 |" in text
+    assert "| WSL 内存总量 | 15.58 GiB |" in text
+    assert "| PyTorch CUDA 运行时 | 12.8 |" in text
+    assert "| PyTorch CPU 线程数 | 12 |" in text
 
 
 def test_export_report_distinguishes_pt_size_from_original_image_size():

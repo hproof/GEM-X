@@ -270,8 +270,12 @@ def run_batch(args):
     try:
         import torch
 
+        from .pose_environment import collect_environment
         from .pose_json import BodyPoseExporter
 
+        report["environment"] = collect_environment(
+            args.device, getattr(args, "detector_device", None)
+        )
         device = torch.device(args.device)
         if device.type not in {"cpu", "cuda"}:
             raise ValueError("设备仅支持 cpu 或 cuda[:序号]")
