@@ -160,6 +160,7 @@ class BodyPoseExporter:
             raise ValueError("SOMA 公共骨架必须包含 77 个预测关节")
         parents = runtime.public_joint_parent_ids[1:].cpu().numpy() - 1
         parents[0] = -1
+
         def tensor(value):
             return torch.as_tensor(value, dtype=torch.float32, device=self.device)
 
