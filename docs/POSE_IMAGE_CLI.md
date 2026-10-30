@@ -75,7 +75,7 @@ wsl -d aigc --cd /home/hproof/git-proj/GEM-X -- /home/hproof/miniconda3/envs/gem
 ```text
 outputs/poses/
 └── infer_20261030_123513_298/
-    ├── report.json
+    ├── report.md
     ├── person.jpg.pt
     ├── person.jpg.pose.json
     └── nested/
@@ -111,18 +111,26 @@ outputs/poses/
 
 ## 性能报告
 
-`report.json` 含每文件状态、输出相对路径、错误和阶段耗时，以及汇总：
+运行报告由 Python 按固定模板直接生成 `report.md`，使用 UTF-8 中文 Markdown，无需 AI 或网络服务。新执行不再生成 `report.json`；姿态数据仍保存为 `.pose.json`，历史执行文件保留。
 
-| 字段 | 统计口径 |
+报告包含输入文件表、分项耗时表、输出文件表、错误记录及汇总。每个输入记录格式后缀、宽和高、像素数、文件精确字节数及状态。尺寸取实际解码后用于识别的图片，像素数为宽乘高；未检出人物也保留尺寸，坏图无法读取尺寸时显示 `—`，仍记录能读取到的文件字节数。
+
+独立导出时，尺寸从 `.pt` 的预测记录取得，字节数为输入 `.pt` 的大小，不冒充原图大小；此时像素吞吐率显示“不适用”。
+
+| 指标 | 统计口径 |
 | --- | --- |
-| `initialization_seconds` | 依赖导入和资源初始化，独立导出也包含 SOMA 加载 |
-| `first_item_seconds` | 第一项实际尝试的处理耗时，可能包含首次计算预热 |
-| `subsequent_success_mean_seconds` | 排除第一项后，成功文件的平均耗时 |
-| `subsequent_success_p50_seconds`、`subsequent_success_p95_seconds` | 同一成功样本集的耗时分位数 |
-| `end_to_end_success_images_per_second` | 成功数除以整体耗时，包含初始化和失败成本 |
-| `steady_success_images_per_second` | 排除第一项后，成功数除以后续所有尝试耗时，包含坏图和未检出成本 |
+| 资源初始化 | 依赖导入和资源初始化，独立导出也包含 SOMA 加载 |
+| 首张耗时 | 第一项实际尝试的处理耗时，可能包含首次计算预热；终端标注“含首次运行开销” |
+| 排除首张后的平均耗时 | 首张之后成功文件的平均耗时，终端也显示该值 |
+| 后续耗时中位数及第 95 百分位 | 同一成功样本集的耗时分位数 |
+| 端到端成功吞吐率（张/秒） | 成功数除以整体耗时，包含初始化和失败成本 |
+| 持续成功吞吐率（张/秒） | 排除首张后，成功数除以后续所有尝试耗时，包含坏图和未检出成本 |
+| 端到端成功像素吞吐率（百万像素/秒） | 成功图片的原图总像素数除以一百万，再除以整体耗时 |
+| 持续成功像素吞吐率（百万像素/秒） | 排除首张后的成功原图总像素数除以一百万，再除以后续所有尝试耗时 |
 
-整体计时截止报告写入之前；命令行解析及最终报告写盘不在该耗时内。GPU 阶段边界显式同步。没有足够样本时相关字段为 `null`。
+吞吐率以“张/秒”为主，百万像素/秒用于辅助了解输入规模。检测器将输入缩放至固定尺寸，姿态模型使用固定尺寸的人体裁剪，所以原图像素数与网络计算量不成正比。文件字节数受 PNG、JPEG 等压缩方式影响，不用作主要性能指标。
+
+整体计时截止报告写入之前；命令行解析及最终报告写盘不在该耗时内。GPU 阶段边界显式同步。没有足够样本时报告显示 `—`；只有一张图片时，不报告持续处理性能。
 
 RTX 3060、当前 `gem-x` 环境的功能验证使用三张有效图片，以及一张黑图、一张坏图；三张有效图片来自仓库同一示例海报的不同格式，不能作为精度或长期性能基准。设置 `OMP_NUM_THREADS=4`、`MKL_NUM_THREADS=4`、`OPENBLAS_NUM_THREADS=4`，检测器使用 CPU 时，测得：
 
@@ -130,14 +138,16 @@ RTX 3060、当前 `gem-x` 环境的功能验证使用三张有效图片，以及
 - 持续成功吞吐率约 0.64 张/秒，包含黑图与坏图的处理成本；含初始化的端到端约 0.13 张/秒。
 - 三张有效图片均输出 77 关节和归一化四元数；重建最大误差约 0.0013 毫米。
 
-实测报告位于 `outputs/pose_cli_validation/infer_20261030_123513_298/report.json`。实际吞吐率受输入尺寸、CPU 线程数和 GPU 当前负载影响；测试自己的目录时以本次报告为准。
+上述历史实测报告位于 `outputs/pose_cli_validation/infer_20261030_123513_298/report.json`。实际吞吐率受输入尺寸、CPU 线程数和 GPU 当前负载影响；测试自己的目录时以本次报告为准。
 
 部署到 `/home/hproof/git-proj/GEM-X` 后，已使用默认资源路径再次验证：单图输出位于 `outputs/pose_cli_deployed/infer_20261030_123956_607`，独立导出位于 `outputs/pose_cli_deployed/export_20261030_124114_513`。两种导出的关节名称、层次及旋转一致，位置最大分量差异约 0.001 毫米；独立导出验证期间禁止导入 `transformers`，仍正常完成。
 
-新增测试和相关既有测试共 48 项通过；本次七个 Python 文件通过 Ruff 和 Black 检查。未运行训练或渲染测试，也未进行 Unity 接入验证。
+新增测试和相关既有测试共 52 项通过，涵盖 Markdown、图片元数据和像素吞吐率；本次 Python 文件通过 Ruff 和 Black 检查。未运行训练或渲染测试，也未进行 Unity 接入验证。
+
+Markdown 报告已在部署目录使用 `assets/images` 下四张图片实测，全部成功。报告为 `outputs/pose_report_deployed/infer_20261030_133150_809/report.md`；该次排除首张后平均 1.070 秒/张，持续吞吐率 0.934 张/秒、0.424 百万像素/秒。独立导出的报告为 `outputs/pose_report_deployed/export_20261030_133227_218/report.md`。
 
 开发验证命令：
 
 ```bash
-python -m pytest -q tests/inference/test_pose_json.py tests/inference/test_pose_batch.py tests/inference/test_pose_image_cli.py tests/inference/test_body_inputs.py tests/inference/test_entrypoints.py tests/common/test_geometry.py
+python -m pytest -q tests/inference/test_pose_json.py tests/inference/test_pose_batch.py tests/inference/test_pose_report.py tests/inference/test_pose_image_cli.py tests/inference/test_body_inputs.py tests/inference/test_entrypoints.py tests/common/test_geometry.py
 ```

@@ -74,7 +74,9 @@ def test_output_ancestor_does_not_hide_nested_inputs(tmp_path):
     assert files == [p]
 
 
-def test_directory_run_keeps_all_outputs_together_and_continues_after_errors(tmp_path, monkeypatch):
+def test_directory_run_keeps_all_outputs_together_and_continues_after_errors(
+    tmp_path, monkeypatch, capsys
+):
     import argparse
     import json
 
@@ -83,7 +85,7 @@ def test_directory_run_keeps_all_outputs_together_and_continues_after_errors(tmp
     source = tmp_path / "inputs"
     source.mkdir()
     for name in ["a.jpg", "a.png", "broken.jpg", "empty.jpg"]:
-        (source / name).touch()
+        (source / name).write_bytes(b"12345")
     assets = tmp_path / "assets"
     assets.mkdir()
     for name in [
@@ -107,9 +109,10 @@ def test_directory_run_keeps_all_outputs_together_and_continues_after_errors(tmp
             Runner.loads += 1
             self.exporter = Exporter()
 
-        def predict(self, path, timings):
+        def predict(self, path, timings, image):
             if path.stem == "broken":
                 raise ValueError("图片损坏")
+            image.update(width=640, height=480, pixel_count=307200)
             if path.stem == "empty":
                 raise pose_batch.NoPersonError("未检出人物")
             return {"source": path.name}
@@ -134,13 +137,17 @@ def test_directory_run_keeps_all_outputs_together_and_continues_after_errors(tmp
         "a.jpg.pose.json",
         "a.png.pt",
         "a.png.pose.json",
-        "report.json",
+        "report.md",
     }
-    report = json.loads((runs[0] / "report.json").read_text(encoding="utf-8"))
-    assert report["summary"]["success_count"] == 2
-    assert report["summary"]["failed_count"] == 1
-    assert report["summary"]["no_person_count"] == 1
-    assert report["unprocessed_count"] == 0
+    report = (runs[0] / "report.md").read_text(encoding="utf-8")
+    assert "| 成功 | 2 |" in report
+    assert "| 失败 | 1 |" in report
+    assert "| 未检出人物 | 1 |" in report
+    assert "| 未处理 | 0 |" in report
+    assert "640 × 480" in report and "307200" in report
+    assert "| 5 |" in report
+    assert "图片损坏" in report and "未检出人物" in report
+    assert "排除首张后的平均耗时" in capsys.readouterr().out
     assert Runner.loads == 1
     assert json.loads((runs[0] / "a.png.pose.json").read_text())["source"] == "a.png"
 
@@ -149,7 +156,6 @@ def test_report_survives_memory_failure_and_leaves_remaining_files_unprocessed(
     tmp_path, monkeypatch
 ):
     import argparse
-    import json
 
     import torch
 
@@ -189,16 +195,14 @@ def test_report_survives_memory_failure_and_leaves_remaining_files_unprocessed(
         device="cpu",
     )
     assert pose_batch.run_batch(args) == 1
-    report_file = next(args.output_dir.glob("*/report.json"))
-    report = json.loads(report_file.read_text(encoding="utf-8"))
-    assert report["unprocessed_count"] == 1
-    assert len(report["records"]) == 1 and report["records"][0]["fatal"]
-    assert "显存不足" in report["error"]
+    report = next(args.output_dir.glob("*/report.md")).read_text(encoding="utf-8")
+    assert "| 未处理 | 1 |" in report
+    assert "显存不足" in report
+    assert "a.pt" in report and "b.pt" not in report
 
 
 def test_export_initialization_failure_does_not_attempt_each_file(tmp_path, monkeypatch):
     import argparse
-    import json
 
     from gem.inference import pose_batch
 
@@ -228,6 +232,45 @@ def test_export_initialization_failure_does_not_attempt_each_file(tmp_path, monk
         device="cpu",
     )
     assert pose_batch.run_batch(args) == 2
-    report = json.loads(next(args.output_dir.glob("*/report.json")).read_text(encoding="utf-8"))
-    assert "初始化失败" in report["error"] and "资产损坏" in report["error"]
-    assert report["records"] == []
+    report = next(args.output_dir.glob("*/report.md")).read_text(encoding="utf-8")
+    assert "初始化失败" in report and "资产损坏" in report
+    assert "| 已尝试 | 0 |" in report
+    assert "| 未处理 | 2 |" in report
+
+
+def test_pixel_throughput_excludes_first_image_and_failed_pixels_but_includes_failure_time():
+    rows = [
+        {"status": "success", "total_seconds": 10, "image": {"pixel_count": 2000000}},
+        {"status": "success", "total_seconds": 2, "image": {"pixel_count": 1000000}},
+        {"status": "no_person", "total_seconds": 1, "image": {"pixel_count": 5000000}},
+        {"status": "success", "total_seconds": 4, "image": {"pixel_count": 3000000}},
+    ]
+    summary = summarize_records(rows, initialization_seconds=3, total_seconds=20)
+    assert summary["end_to_end_success_megapixels_per_second"] == pytest.approx(0.3)
+    assert summary["steady_success_megapixels_per_second"] == pytest.approx(4 / 7)
+    assert summary["steady_success_images_per_second"] == pytest.approx(2 / 7)
+    assert summarize_records(rows[:1], 3, 13)["steady_success_megapixels_per_second"] is None
+    rows[-1]["image"]["pixel_count"] = None
+    assert summarize_records(rows, 3, 20)["steady_success_megapixels_per_second"] is None
+
+
+def test_image_dimensions_are_kept_when_detection_finds_no_person(tmp_path, monkeypatch):
+    import cv2
+    import numpy as np
+
+    from gem.inference.pose_batch import BodyImageRunner, NoPersonError
+
+    path = tmp_path / "blank.png"
+    assert cv2.imwrite(str(path), np.zeros((45, 80, 3), dtype=np.uint8))
+
+    def no_person(*args):
+        raise ValueError("No person track was detected")
+
+    monkeypatch.setattr("gem.common.detectors.detect_track", no_person)
+    runner = BodyImageRunner.__new__(BodyImageRunner)
+    runner.device = "cpu"
+    runner.detector = object()
+    image = {}
+    with pytest.raises(NoPersonError):
+        runner.predict(path, {}, image)
+    assert image == {"width": 80, "height": 45, "pixel_count": 3600}

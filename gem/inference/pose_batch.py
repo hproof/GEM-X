@@ -78,6 +78,20 @@ def _write_json(path, data):
     )
 
 
+def _write_report(path, data):
+    from .pose_report import format_report
+
+    _atomic_write(path, lambda p: p.write_text(format_report(data), encoding="utf-8"))
+
+
+def _pixel_rate(records, seconds):
+    """成功像素作为分子；数据缺失时避免生成部分样本的误导性比率。"""
+    counts = [r.get("image", {}).get("pixel_count") for r in records if r["status"] == "success"]
+    if seconds <= 0 or not counts or any(count is None for count in counts):
+        return None
+    return sum(counts) / 1_000_000 / seconds
+
+
 def _percentile(values, fraction):
     values = sorted(values)
     at = (len(values) - 1) * fraction
@@ -109,6 +123,8 @@ def summarize_records(records, initialization_seconds, total_seconds):
         "steady_success_images_per_second": (
             steady_count / steady_seconds if steady_seconds > 0 else None
         ),
+        "end_to_end_success_megapixels_per_second": _pixel_rate(records, total_seconds),
+        "steady_success_megapixels_per_second": _pixel_rate(later, steady_seconds),
     }
 
 
@@ -169,7 +185,7 @@ class BodyImageRunner:
             ):
                 raise ValueError("相机内参必须是焦距为正且数值有限的 3×3 矩阵")
 
-    def predict(self, path, timings):
+    def predict(self, path, timings, image):
         import cv2
 
         from gem.common.detectors import detect_track
@@ -181,6 +197,8 @@ class BodyImageRunner:
             bgr = cv2.imread(str(path))
             if bgr is None:
                 raise ValueError(f"无法读取图片：{path.name}")
+            height, width = bgr.shape[:2]
+            image.update(width=width, height=height, pixel_count=width * height)
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
             try:
                 tracks = detect_track([rgb], self.detector)
@@ -269,11 +287,12 @@ def run_batch(args):
         _sync(args.device)
     except Exception as exc:
         report["error"] = f"初始化失败：{exc}"
+        report["finished_at"] = datetime.now().astimezone().isoformat()
         report["summary"] = summarize_records(
             [], perf_counter() - initialization_start, perf_counter() - overall_start
         )
         try:
-            _write_json(run_dir / "report.json", report)
+            _write_report(run_dir / "report.md", report)
         except OSError as write_error:
             print(f"无法保存执行报告：{write_error}", file=sys.stderr)
         print(report["error"], file=sys.stderr)
@@ -290,16 +309,23 @@ def run_batch(args):
             "status": "success",
             "timings": {},
             "outputs": {},
+            "input_size_bytes": None,
+            "input_format": path.suffix.lstrip(".").upper(),
+            "image": {"width": None, "height": None, "pixel_count": None},
         }
         start = perf_counter()
         try:
+            row["input_size_bytes"] = path.stat().st_size
             if runner is not None:
-                prediction = runner.predict(path, row["timings"])
+                prediction = runner.predict(path, row["timings"], row["image"])
             else:
                 with _measure(row["timings"], "load_seconds", args.device):
                     prediction = torch.load(path, map_location="cpu", weights_only=False)
             with _measure(row["timings"], "export_seconds", args.device):
                 document = exporter.export(prediction)
+                if runner is None:
+                    width, height = document["source"]["image_size"]
+                    row["image"].update(width=width, height=height, pixel_count=width * height)
             with _measure(row["timings"], "save_seconds", args.device):
                 json_path = output_base.with_name(output_base.name + ".pose.json")
                 _write_json(json_path, document)
@@ -320,7 +346,7 @@ def run_batch(args):
         labels = {"success": "成功", "no_person": "未检出人物", "failed": "失败"}
         print(
             f'[{index+1}/{len(paths)}] {relative}：{labels[row["status"]]}，'
-            f'{row["total_seconds"]:.3f} 秒',
+            f'{row["total_seconds"]:.3f} 秒' + ("（含首次运行开销）" if index == 0 else ""),
             flush=True,
         )
         if row.get("error"):
@@ -333,11 +359,20 @@ def run_batch(args):
         records, initialization_seconds, perf_counter() - overall_start
     )
     try:
-        _write_json(run_dir / "report.json", report)
+        _write_report(run_dir / "report.md", report)
     except OSError as exc:
         print(f"无法保存执行报告：{exc}", file=sys.stderr)
         return 1
     summary = report["summary"]
+    average = summary["subsequent_success_mean_seconds"]
+    steady_rate = summary["steady_success_images_per_second"]
+    print(
+        "排除首张后的平均耗时："
+        + (f"{average:.3f} 秒/张" if average is not None else "样本不足")
+        + "；持续成功吞吐率："
+        + (f"{steady_rate:.3f} 张/秒" if steady_rate is not None else "样本不足"),
+        flush=True,
+    )
     print(
         f'完成：成功 {summary["success_count"]}，未检出 {summary["no_person_count"]}，'
         f'失败 {summary["failed_count"]}。本次输出目录：{run_dir}',
