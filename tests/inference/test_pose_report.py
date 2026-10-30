@@ -42,7 +42,8 @@ def test_markdown_report_has_metadata_stages_outputs_and_escaped_errors():
     text = format_report(report)
     assert text.startswith("# 图片姿态处理报告\n")
     assert "人物\\|图.png" in text and "读取\\|失败<br>下一行" in text
-    assert "640 × 480" in text and "| 2048 |" in text
+    assert "640 × 480" in text and "| 2,048 |" in text
+    assert "| 307,200 |" in text
     assert "排除首张后的平均耗时" in text
     assert "张/秒" in text and "百万像素/秒" in text
     assert "0.250" in text and "0.500" in text
@@ -74,6 +75,6 @@ def test_export_report_distinguishes_pt_size_from_original_image_size():
             "summary": summarize_records(records, 2, 3),
         }
     )
-    assert "800 × 600" in text and "| 4096 |" in text
+    assert "800 × 600" in text and "| 4,096 |" in text
     assert "字节数为输入 .pt 文件大小" in text
     assert "不适用" in text

@@ -144,7 +144,7 @@ def test_directory_run_keeps_all_outputs_together_and_continues_after_errors(
     assert "| 失败 | 1 |" in report
     assert "| 未检出人物 | 1 |" in report
     assert "| 未处理 | 0 |" in report
-    assert "640 × 480" in report and "307200" in report
+    assert "640 × 480" in report and "307,200" in report
     assert "| 5 |" in report
     assert "图片损坏" in report and "未检出人物" in report
     assert "排除首张后的平均耗时" in capsys.readouterr().out

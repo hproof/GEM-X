@@ -5,6 +5,8 @@ def _cell(value):
     """避免文件名或异常消息破坏表格结构。"""
     if value is None:
         return "—"
+    if isinstance(value, int):
+        return f"{value:,}"
     return (
         str(value)
         .replace("&", "&amp;")
@@ -20,7 +22,7 @@ def _cell(value):
 
 
 def _number(value):
-    return "—" if value is None else f"{value:.3f}"
+    return "—" if value is None else f"{value:,.3f}"
 
 
 def _table(headers, rows):
@@ -121,7 +123,7 @@ def format_report(report):
     for record in records:
         image = record.get("image", {})
         width, height = image.get("width"), image.get("height")
-        dimensions = f"{width} × {height}" if width is not None and height is not None else None
+        dimensions = f"{width:,} × {height:,}" if width is not None and height is not None else None
         name = record["relative_path"]
         inputs.append(
             [
