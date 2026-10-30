@@ -27,6 +27,8 @@ class ChineseParser(argparse.ArgumentParser):
             ("unrecognized arguments:", "无法识别的参数："),
             ("invalid choice:", "无效选项："),
             ("choose from", "可选值为"),
+            ("expected one argument", "需要一个参数值"),
+            ("argument ", "参数 "),
         ]:
             message = message.replace(old, new)
         self.print_usage(sys.stderr)

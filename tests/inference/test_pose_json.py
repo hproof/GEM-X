@@ -1,11 +1,12 @@
 """验证姿态交换协议的坐标、骨架及数值约束。"""
 
 import copy
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from gem.inference.pose_json import build_pose_document, validate_prediction
+from gem.inference.pose_json import BodyPoseExporter, build_pose_document, validate_prediction
 
 
 def sample_prediction():
@@ -91,3 +92,31 @@ def test_rejects_reconstruction_that_does_not_match_saved_joints():
     transforms = np.tile(np.eye(4), (2, 1, 1))
     with pytest.raises(ValueError, match="重建"):
         build_pose_document(p, ["Hips", "Child"], [-1, 0], transforms, transforms)
+
+
+def test_rejects_out_of_range_parent_reached_via_another_joint():
+    transforms = np.tile(np.eye(4), (3, 1, 1))
+    with pytest.raises(ValueError, match="索引越界"):
+        build_pose_document(
+            sample_prediction(), ["Hips", "Child", "Grandchild"], [-1, 2, 9], transforms, transforms
+        )
+
+
+def test_rejects_fractional_parent_indices():
+    transforms = np.tile(np.eye(4), (2, 1, 1))
+    with pytest.raises(ValueError, match="整数"):
+        build_pose_document(
+            sample_prediction(), ["Hips", "Child"], [-1, 0.5], transforms, transforms
+        )
+
+
+def test_explicit_initialization_loads_lazy_runtime_before_processing(tmp_path):
+    class BrokenModel:
+        @property
+        def runtime(self):
+            raise ValueError("SOMA 资产损坏")
+
+    geometry = SimpleNamespace(body_model=BrokenModel())
+    exporter = BodyPoseExporter(tmp_path, geometry=geometry)
+    with pytest.raises(ValueError, match="资产损坏"):
+        exporter.initialize()

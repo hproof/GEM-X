@@ -1,5 +1,6 @@
 """将 Body 单图预测转换为含参考姿态的完整骨架 JSON。"""
 
+from numbers import Integral
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +36,7 @@ def _check_hierarchy(names, parents):
     for index in range(1, len(names)):
         if not 0 <= parents[index] < len(names):
             raise ValueError("父节点索引越界或存在多个根节点")
+    for index in range(1, len(names)):
         visited = set()
         cursor = index
         while cursor != -1:
@@ -62,6 +64,9 @@ def build_pose_document(prediction, names, parents, reference, posed):
     """将公共骨架变换转换为统一基坐标的可序列化字典。"""
     row = validate_prediction(prediction)
     names = [str(name) for name in names]
+    parents = list(parents)
+    if any(not isinstance(parent, Integral) or isinstance(parent, bool) for parent in parents):
+        raise ValueError("父节点索引必须是整数")
     parents = [int(parent) for parent in parents]
     _check_hierarchy(names, parents)
     reference = _transforms(reference, len(names))
@@ -128,13 +133,31 @@ class BodyPoseExporter:
         self.soma_assets = Path(soma_assets)
         self.device = device
         self.geometry = geometry
+        self.names = None
+        self.parents = None
+
+    def initialize(self):
+        """显式初始化几何，使资产故障与逐文件数据错误分开报告。"""
+        if self.names is not None:
+            return
+        if self.geometry is None:
+            from gem.pose.geometry.body import BodyGeometry
+
+            self.geometry = BodyGeometry(self.soma_assets, device=self.device)
+        runtime = self.geometry.body_model.runtime
+        public_names = list(map(str, runtime.public_joint_names))
+        if len(public_names) != 78 or public_names[1] != "Hips":
+            raise ValueError("SOMA 公共骨架必须包含虚拟根和 77 个预测关节，Hips 位于首位")
+        parents = runtime.public_joint_parent_ids[1:].cpu().numpy() - 1
+        parents[0] = -1
+        _check_hierarchy(public_names[1:], parents)
+        self.names, self.parents = public_names[1:], parents
 
     def export(self, prediction):
         """重建源公共骨架的参考和预测变换，并校验保存的三维关节。"""
         import torch
 
         from gem.common.geometry.rotations import matrix_to_axis_angle
-        from gem.pose.geometry.body import BodyGeometry
 
         row = validate_prediction(prediction)
         params = row.get("parameters", {})
@@ -150,16 +173,8 @@ class BodyPoseExporter:
                 raise ValueError(f"Body 参数 {key} 存在非有限数值")
         if scale.shape == (57,) and scale[0] != 1.0:
             raise ValueError("Body 全局缩放必须固定为一")
-        if self.geometry is None:
-            self.geometry = BodyGeometry(self.soma_assets, device=self.device)
+        self.initialize()
         runtime = self.geometry.body_model.runtime
-        if tuple(map(str, runtime.public_joint_names))[1] != "Hips":
-            raise ValueError("SOMA 公共骨架不符合虚拟根和 Hips 顺序")
-        names = list(map(str, runtime.public_joint_names))[1:]
-        if len(names) != 77:
-            raise ValueError("SOMA 公共骨架必须包含 77 个预测关节")
-        parents = runtime.public_joint_parent_ids[1:].cpu().numpy() - 1
-        parents[0] = -1
 
         def tensor(value):
             return torch.as_tensor(value, dtype=torch.float32, device=self.device)
@@ -189,4 +204,4 @@ class BodyPoseExporter:
                 fk_only=True,
             )
             reference = reference.transforms[0, 1:].detach().cpu().numpy().copy()
-        return build_pose_document(prediction, names, parents, reference, posed)
+        return build_pose_document(prediction, self.names, self.parents, reference, posed)

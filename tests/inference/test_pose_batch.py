@@ -173,6 +173,9 @@ def test_report_survives_memory_failure_and_leaves_remaining_files_unprocessed(
         def __init__(self, *args):
             pass
 
+        def initialize(self):
+            pass
+
         def export(self, prediction):
             raise torch.cuda.OutOfMemoryError("测试显存不足")
 
@@ -191,3 +194,40 @@ def test_report_survives_memory_failure_and_leaves_remaining_files_unprocessed(
     assert report["unprocessed_count"] == 1
     assert len(report["records"]) == 1 and report["records"][0]["fatal"]
     assert "显存不足" in report["error"]
+
+
+def test_export_initialization_failure_does_not_attempt_each_file(tmp_path, monkeypatch):
+    import argparse
+    import json
+
+    from gem.inference import pose_batch
+
+    source = tmp_path / "inputs"
+    source.mkdir()
+    for name in ["a.pt", "b.pt"]:
+        (source / name).touch()
+    monkeypatch.setattr(pose_batch, "_validate_resources", lambda args: None)
+
+    class Exporter:
+        def __init__(self, *args):
+            pass
+
+        def initialize(self):
+            raise ValueError("SOMA 资产损坏")
+
+        def export(self, prediction):
+            raise AssertionError("初始化失败时不应处理文件")
+
+    monkeypatch.setattr("gem.inference.pose_json.BodyPoseExporter", Exporter)
+    args = argparse.Namespace(
+        command="export",
+        input=source,
+        output_dir=tmp_path / "out",
+        recursive=False,
+        soma_assets=tmp_path / "assets",
+        device="cpu",
+    )
+    assert pose_batch.run_batch(args) == 2
+    report = json.loads(next(args.output_dir.glob("*/report.json")).read_text(encoding="utf-8"))
+    assert "初始化失败" in report["error"] and "资产损坏" in report["error"]
+    assert report["records"] == []

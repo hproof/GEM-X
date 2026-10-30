@@ -265,6 +265,7 @@ def run_batch(args):
         else:
             runner = None
             exporter = BodyPoseExporter(args.soma_assets, args.device)
+            exporter.initialize()
         _sync(args.device)
     except Exception as exc:
         report["error"] = f"初始化失败：{exc}"

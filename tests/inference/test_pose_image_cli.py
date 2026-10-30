@@ -92,3 +92,12 @@ def test_wrapper_runs_from_another_working_directory(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "infer" in result.stdout and "export" in result.stdout
+
+
+def test_missing_option_value_is_reported_in_chinese(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["infer", "-i"])
+    assert exc.value.code == 2
+    error = capsys.readouterr().err
+    assert "需要一个参数值" in error
+    assert "expected one argument" not in error
