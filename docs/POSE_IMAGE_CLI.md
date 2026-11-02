@@ -121,6 +121,8 @@ v1 的 `reference_root_relative_position`、`posed_root_relative_position` 已�
 
 独立导出时，尺寸从 `.pt` 的预测记录取得，字节数为输入 `.pt` 的大小，不冒充原图大小；此时像素吞吐率显示“不适用”。
 
+报告的“软硬件环境”表由脚本自动采集，包含 WSL 发行版、系统和内核、处理器、逻辑处理器数、WSL 内存总量、GPU 和显存总量、驱动、Python 环境、PyTorch/CUDA、ONNX Runtime、Warp、SOMA-X，以及姿态和检测设备、PyTorch CPU 线程数及常用线程环境变量。环境采集计入初始化，不计入单张图片耗时。无法读取的可选配置保留为未知提示；CUDA 为 PyTorch 运行时版本，WSL 内存为 Linux 分配额度。
+
 | 指标 | 统计口径 |
 | --- | --- |
 | 资源初始化 | 依赖导入和资源初始化，独立导出也包含 SOMA 加载 |

@@ -118,6 +118,13 @@ def format_report(report):
         "模型会将输入缩放或裁剪为固定尺寸，像素吞吐率不代表网络计算量。",
         "## 输入文件",
     ]
+    if report.get("environment"):
+        text[2:2] = [
+            "## 软硬件环境",
+            _table(["配置项", "内容"], report["environment"]),
+            "以上为本次执行自动采集的配置。WSL 内存总量是分配给 Linux 的内存，并非宿主机物理内存；"
+            "CUDA 版本是 PyTorch 使用的运行时版本。环境采集计入初始化，不计入单张图片处理时间。",
+        ]
     inputs, timings, outputs, errors = [], [], [], []
     labels = {"success": "成功", "no_person": "未检出人物", "failed": "失败"}
     for record in records:
