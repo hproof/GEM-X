@@ -61,7 +61,12 @@ def _transforms(value, count):
 
 
 def build_pose_document(prediction, names, parents, reference, posed):
-    """将公共骨架变换转换为统一基坐标的可序列化字典。"""
+    """将公共骨架变换转换为 Y 向上的相机坐标 JSON。
+
+    SOMA 的零姿态头朝源坐标的正 Y，而相机坐标的正 Y 向下。参考姿态
+    在换基前绕 X 轴旋转 180 度，使其导出后也保持头朝上；预测姿态保留
+    模型输出的整体根旋转。两套位置都以相机为原点，Hips 保留相机平移。
+    """
     row = validate_prediction(prediction)
     names = [str(name) for name in names]
     parents = list(parents)
@@ -80,18 +85,30 @@ def build_pose_document(prediction, names, parents, reference, posed):
     error = float(np.linalg.norm(posed[:, :3, 3] - saved, axis=1).max())
     if error > 1e-4:
         raise ValueError(f"骨架重建与保存关节不一致，最大误差 {error * 1000:.6f} 毫米")
+    # 参考姿态采用与预测骨架相同的相机原点，并将中性 SOMA 姿态转为正立。
+    source_root = translation
+    source_reference_root = reference[0, :3, 3]
+    upright = np.diag([1.0, -1.0, -1.0])
+    reference_rotation = reference[:, :3, :3].copy()
+    reference_position = reference[:, :3, 3].copy()
+    reference_rotation = np.einsum("ab,nbc->nac", upright, reference_rotation)
+    reference_position = (reference_position - source_reference_root) @ upright + source_root
+
     # 相机 Y 向下，交换协议 Y 向上；旋转必须同时变换输入与输出基。
     basis = np.diag([1.0, -1.0, 1.0])
     rotations, positions = [], []
-    for transforms in [reference, posed]:
-        r = basis @ transforms[:, :3, :3] @ basis
+    for rotation, position in [
+        (reference_rotation, reference_position),
+        (posed[:, :3, :3], posed[:, :3, 3]),
+    ]:
+        r = basis @ rotation @ basis
         q = Rotation.from_matrix(r).as_quat(canonical=True)
         q /= np.linalg.norm(q, axis=1, keepdims=True)
         rotations.append(q)
-        positions.append((transforms[:, :3, 3] - transforms[0, :3, 3]) @ basis)
+        positions.append(position @ basis)
     release = prediction.get("release") or {}
     return {
-        "schema_version": "gemx_unity_pose_v1",
+        "schema_version": "gemx_unity_pose_v2",
         "source": {
             "image": prediction.get("source"),
             "image_size": prediction["frames"][0]["image_size"],
@@ -107,8 +124,8 @@ def build_pose_document(prediction, names, parents, reference, posed):
             "z": "forward",
             "handedness": "left",
             "quaternion_order": "xyzw",
-            "rotation_space": "model",
-            "position_origin": "Hips",
+            "rotation_space": "camera",
+            "position_origin": "camera",
         },
         "camera_translation": (translation @ basis).tolist(),
         "validation": {"max_reconstruction_error_meters": error},
@@ -118,8 +135,8 @@ def build_pose_document(prediction, names, parents, reference, posed):
                 "parent_index": parents[i],
                 "reference_world_rotation": rotations[0][i].tolist(),
                 "posed_world_rotation": rotations[1][i].tolist(),
-                "reference_root_relative_position": positions[0][i].tolist(),
-                "posed_root_relative_position": positions[1][i].tolist(),
+                "reference_camera_position": positions[0][i].tolist(),
+                "posed_camera_position": positions[1][i].tolist(),
             }
             for i, name in enumerate(names)
         ],

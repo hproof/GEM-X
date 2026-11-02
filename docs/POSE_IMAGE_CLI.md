@@ -89,25 +89,29 @@ outputs/poses/
 
 ## 姿态 JSON 协议
 
-协议版本为 `gemx_unity_pose_v1`，包含完整源骨架及其参考姿态。名称中的 Unity 表示预定交换用途；后续接入 Humanoid 仍需根据目标角色骨轴和参考姿态进行重定向。本次交付 Python CLI 和数据，不包含 Unity 脚本、动画片段或资源包。
+协议版本为 `gemx_unity_pose_v2`，包含完整源骨架及其正立参考姿态。所有位置以源相机为原点，保留 Hips 的相机位移。后续接入 Humanoid 仍需根据目标角色骨轴和参考姿态进行重定向。
 
 | 字段 | 含义 |
 | --- | --- |
 | `source` | 来源图片、尺寸、模型和几何版本 |
 | `coordinates` | 米；X 向右、Y 向上、Z 向前；左手坐标基；四元数顺序 `[x,y,z,w]` |
-| `camera_translation` | 同一坐标基下的相机平移，供调试使用 |
+| `camera_translation` | 同一坐标基下的 Hips 相机平移，已包含在关节位置中，不可重复叠加 |
 | `validation.max_reconstruction_error_meters` | SOMA 重建关节与 `.pt` 保存关节的最大位置误差 |
 | `joints` | 77 个公共关节，去除 SOMA 虚拟 Root；包含双手及手指 |
 | `joints[].name` | 源关节名称 |
 | `joints[].parent_index` | 父节点在数组中的索引，Hips 根节点为 `-1` |
-| `joints[].reference_world_rotation` | 源参考姿态的全局四元数 |
-| `joints[].posed_world_rotation` | 预测姿态的全局四元数 |
-| `joints[].reference_root_relative_position` | 相同身份及骨长的参考位置，相对 Hips |
-| `joints[].posed_root_relative_position` | 预测位置，相对 Hips |
+| `joints[].reference_world_rotation` | 正立参考姿态在输出相机坐标基中的全局四元数 |
+| `joints[].posed_world_rotation` | 预测姿态在输出相机坐标基中的全局四元数 |
+| `joints[].reference_camera_position` | 相同身份及骨长的正立参考位置，以相机为原点，与预测共用 Hips 位置 |
+| `joints[].posed_camera_position` | 预测位置，以相机为原点 |
 
-全局旋转位于共同模型参考空间，不是游戏场景世界空间，也不是某个角色可直接赋值的局部旋转。参考姿态通过相同身份和骨长、单位关节旋转的 SOMA 前向运动学恢复。
+`coordinates.position_origin` 和 `coordinates.rotation_space` 均为 `camera`。全局旋转位于输出相机坐标基中，不是某个角色可直接赋值的局部旋转；挂载对象的变换决定它在 Unity 场景中的位置和方向。
 
-几何沿用 SOMA-X `0.3.3`、参考姿态 `0.2.0` 和项目的 `legacy_pose021` 配置。相机坐标转为输出坐标时，位置使用 `C=diag(1,-1,1)`，旋转使用 `C @ R @ C`。导出校验层次无环、旋转合法、四元数归一化及数值有限；重建最大误差超过 0.1 毫米时拒绝导出。
+参考姿态通过相同身份和骨长、单位关节旋转的 SOMA 前向运动学恢复。SOMA 零姿态的头朝原生正 Y，而源相机正 Y 向下，因此参考骨架在换基前整体绕 X 轴旋转 180°，位置和全局旋转同时处理，再把 Hips 放到预测 Hips 的相机位置。预测姿态保留模型输出的根旋转。参考朝向固定，不随人物的预测朝向变化。
+
+几何沿用 SOMA-X `0.3.3`、参考姿态 `0.2.0` 和项目的 `legacy_pose021` 配置。相机坐标转为输出坐标时，位置使用 `C=diag(1,-1,1)`，旋转使用 `C @ R @ C`，不再减去 Hips 位置。导出校验层次无环、旋转合法、四元数归一化及数值有限；重建最大误差超过 0.1 毫米时拒绝导出。
+
+v1 的 `reference_root_relative_position`、`posed_root_relative_position` 已替换为上述相机位置字段。旧文件需从 `.pt` 重新导出；Unity 读取新数据时使用“原样”坐标模式，游戏对象原点对应相机原点。
 
 ## 性能报告
 
